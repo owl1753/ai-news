@@ -2,14 +2,12 @@ name: Fetch News Cron
 
 on:
   schedule:
-    - cron: '0 15 * * *'
+    - cron: "0 15 * * *"
   workflow_dispatch:
 
 jobs:
   fetch:
-      runs-on: ubuntu-latest
-      steps:
-        - name: Call fetch-news API
-          run: |
-             curl -X GET https://ai-news-production-e7a7.up.railway.app/api/cron/fetch-news \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call fetch-news API
+        run: curl -X GET https://ai-news-production-e7a7.up.railway.app/api/cron/fetch-news -H "Authorization:Bearer ${{ secrets.CRON_SECRET }}"
