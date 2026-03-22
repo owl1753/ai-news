@@ -33,12 +33,12 @@ function splitText(text: string, maxLength = 4000): string[] {
   const chunks: string[] = [];
   let current = "";
 
-  for (const sentence of text.split(/(?<=\.)\s+/)) {
-    if ((current + sentence).length > maxLength) {
-      chunks.push(current.trim());
-      current = sentence;
+  for (const paragraph of text.split(/\n+/)) {
+    if ((current + "\n" + paragraph).length > maxLength) {
+      if (current.trim()) chunks.push(current.trim());
+      current = paragraph;
     } else {
-      current += " " + sentence;
+      current += "\n" + paragraph;
     }
   }
 
@@ -70,15 +70,18 @@ export async function textToSpeech(text: string, headlines: string[]) {
     chunkPaths.push(chunkPath);
   }
 
-  // ffmpeg concat
-  const concatInput = chunkPaths.join("|");
+  // ffmpeg concat demuxer
+  const listPath = path.join(tmpDir, "list.txt");
+  const listContent = chunkPaths.map((p) => `file '${p}'`).join("\n");
+  await fs.writeFile(listPath, listContent);
+
   const proc = Bun.spawn([
     "ffmpeg",
     "-y",
-    "-i",
-    `concat:${concatInput}`,
-    "-acodec",
-    "copy",
+    "-f", "concat",
+    "-safe", "0",
+    "-i", listPath,
+    "-c", "copy",
     outputPath,
   ]);
   await proc.exited;
