@@ -193,7 +193,36 @@ export async function GET() {
 
     return Response.json({ success: true });
   } catch (e) {
-    console.log(e);
-    return Response.json({ error: "Invalid XML" }, { status: 400 });
+    console.error(e);
+
+    if (e instanceof z.ZodError) {
+      return Response.json(
+        { error: "RSS 파싱 실패", details: e.issues },
+        { status: 400 },
+      );
+    }
+
+    if (e instanceof Error) {
+      if (e.message.includes("fetch")) {
+        return Response.json(
+          { error: "RSS 피드 가져오기 실패", message: e.message },
+          { status: 502 },
+        );
+      }
+
+      if (e.message.includes("storage") || e.message.includes("upload")) {
+        return Response.json(
+          { error: "파일 업로드 실패", message: e.message },
+          { status: 500 },
+        );
+      }
+
+      return Response.json(
+        { error: "서버 오류", message: e.message },
+        { status: 500 },
+      );
+    }
+
+    return Response.json({ error: "알 수 없는 오류" }, { status: 500 });
   }
 }
