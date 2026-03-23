@@ -1,7 +1,8 @@
 import { XMLParser } from "fast-xml-parser";
 import { cookies, headers } from "next/headers";
 import * as z from "zod";
-import * as cheerio from "cheerio";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
 import {
   generateText,
   experimental_generateSpeech as generateSpeech,
@@ -24,7 +25,9 @@ const itemsSchema = z.array(itemSchema);
 const prompt = `
 당신은 뉴스 대본 작성자입니다. title, description, content로 구성된 데이터 리스트를 입력받아서, 한국어로 된 뉴스 대본을 출력하면 됩니다.
 
-분량은 각 소식 별로 3분 정도로 설정합니다.
+분량은 각 소식 별로 2분 내외 정도로 설정합니다.
+
+만약 내용이 겹치는 소식이 있다면, 하나로 합쳐서 소개합니다.
 
 대본은 tts를 통해 음성 데이터로 바로 변환되기 때문에 오로지 텍스트만 포함해야 합니다.
 `;
@@ -78,10 +81,14 @@ export async function textToSpeech(text: string, headlines: string[]) {
   const proc = Bun.spawn([
     "ffmpeg",
     "-y",
-    "-f", "concat",
-    "-safe", "0",
-    "-i", listPath,
-    "-c", "copy",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    listPath,
+    "-c",
+    "copy",
     outputPath,
   ]);
   await proc.exited;
@@ -114,6 +121,14 @@ export async function textToSpeech(text: string, headlines: string[]) {
   if (dbError) throw dbError;
 }
 
+const sources = [
+  "https://techcrunch.com/category/artificial-intelligence/feed/",
+  "https://www.artificialintelligence-news.com/feed/",
+  "https://venturebeat.com/category/ai/feed/",
+  "https://magazine.sebastianraschka.com/feed",
+  "https://ai-techpark.com/category/ai/feed/",
+];
+
 export async function GET() {
   const headersList = await headers();
   const authHeader = headersList.get("authorization");
@@ -124,29 +139,37 @@ export async function GET() {
 
   console.log("인증 성공");
 
-  const data = await fetch(
-    "https://techcrunch.com/category/artificial-intelligence/feed/",
-  );
-
-  const xml = await data.text();
   const parser = new XMLParser();
   try {
-    const items = itemsSchema
-      .parse(parser.parse(xml).rss.channel.item)
-      .filter(
-        (item) => Date.now() - item.pubDate.getTime() < 24 * 60 * 60 * 1000,
-      );
+    const items = (
+      await Promise.all(
+        sources.map(async (source) => {
+          const data = await fetch(source);
 
-    console.log("RSS 피드 가져오기 성공");
+          console.log(`RSS 피드 가져오기 성공: ${source}`);
+
+          const xml = await data.text();
+
+          return itemsSchema
+            .parse(parser.parse(xml).rss.channel.item)
+            .filter(
+              (item) =>
+                Date.now() - item.pubDate.getTime() < 24 * 60 * 60 * 1000,
+            );
+        }),
+      )
+    ).flat();
 
     const itemsWithContent = await Promise.all(
       items.map(async (item) => {
         const data = await fetch(item.link);
-        const $ = cheerio.load(await data.text());
-        const content = $(".wp-block-post-content").text();
+        const html = await data.text();
+        const { document } = parseHTML(html);
+        const reader = new Readability(document);
+        const article = reader.parse();
         return {
           ...item,
-          content,
+          content: article?.textContent ?? "",
         };
       }),
     );
