@@ -22,13 +22,27 @@ export async function NewsCardList() {
             {new Date(item.created_at).toLocaleDateString("ko-KR")}
           </p>
           <ul className="flex flex-col gap-1">
-            {item.headlines.map((headline: string, i: number) => (
-              <li key={i} className="text-sm">
-                • {headline}
-              </li>
-            ))}
+            {item.headlines.map(
+              (headline: string | { title: string; link: string }, i: number) => (
+                <li key={i} className="text-sm">
+                  •{" "}
+                  {typeof headline === "string" ? (
+                    headline
+                  ) : (
+                    <a
+                      href={headline.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline text-blue-600"
+                    >
+                      {headline.title}
+                    </a>
+                  )}
+                </li>
+              ),
+            )}
           </ul>
-          <audio controls src={item.audio_url} className="w-full" />
+          <audio controls src={`${item.audio_url}?v=${new Date(item.created_at).getTime()}`} className="w-full" />
         </div>
       ))}
     </div>
