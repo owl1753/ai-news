@@ -25,9 +25,11 @@ const itemsSchema = z.array(itemSchema);
 const prompt = `
 당신은 뉴스 대본 작성자입니다. title, description, content로 구성된 데이터 리스트를 입력받아서, 한국어로 된 뉴스 대본을 출력하면 됩니다.
 
-분량은 각 소식 별로 2분 내외 정도로 설정합니다.
+중요: 입력된 모든 뉴스를 빠짐없이 다뤄야 합니다. 어떤 뉴스도 생략하지 마세요.
 
-만약 내용이 겹치는 소식이 있다면, 하나로 합쳐서 소개합니다.
+분량은 각 소식 별로 1~2분 정도로 설정합니다.
+
+만약 소식이 중복된다면 있다면, 뒤에 들어온 중복된 소식을 무시합니다.
 
 대본은 tts를 통해 음성 데이터로 바로 변환되기 때문에 오로지 텍스트만 포함해야 합니다.
 `;
@@ -49,7 +51,10 @@ function splitText(text: string, maxLength = 4000): string[] {
   return chunks;
 }
 
-export async function textToSpeech(text: string, headlines: string[]) {
+export async function textToSpeech(
+  text: string,
+  headlines: { title: string; link: string }[],
+) {
   const chunks = splitText(text);
 
   const tmpDir = path.join(process.cwd(), "tmp", randomUUID());
@@ -122,11 +127,15 @@ export async function textToSpeech(text: string, headlines: string[]) {
 }
 
 const sources = [
-  "https://techcrunch.com/category/artificial-intelligence/feed/",
-  "https://www.artificialintelligence-news.com/feed/",
-  "https://venturebeat.com/category/ai/feed/",
-  "https://magazine.sebastianraschka.com/feed",
-  "https://ai-techpark.com/category/ai/feed/",
+  "https://techcrunch.com/category/artificial-intelligence/feed/", // TechCrunch
+  "https://www.artificialintelligence-news.com/feed/", // AI News
+  "https://venturebeat.com/category/ai/feed/", // VentureBeat
+  "https://aimodels.substack.com/feed", // AIModels.fyi
+  "https://magazine.sebastianraschka.com/feed", // Ahead of AI
+  "https://ai-techpark.com/category/ai/feed/", // AI-TechPark
+  "https://www.404media.co/rss/", // 404 Media
+  "https://www.techrepublic.com/rssfeeds/topic/artificial-intelligence/", // Artificial Intelligence News -- ScienceDaily
+  "https://gradientflow.com/feed/", // Gradient Flow
 ];
 
 export async function GET() {
@@ -141,24 +150,26 @@ export async function GET() {
 
   const parser = new XMLParser();
   try {
-    const items = (
-      await Promise.all(
-        sources.map(async (source) => {
+    const results = await Promise.all(
+      sources.map(async (source) => {
+        try {
           const data = await fetch(source);
-
-          console.log(`RSS 피드 가져오기 성공: ${source}`);
-
           const xml = await data.text();
-
-          return itemsSchema
+          const parsed = itemsSchema
             .parse(parser.parse(xml).rss.channel.item)
             .filter(
               (item) =>
                 Date.now() - item.pubDate.getTime() < 24 * 60 * 60 * 1000,
             );
-        }),
-      )
-    ).flat();
+          console.log(`RSS 피드 가져오기 성공: ${source}`);
+          return parsed;
+        } catch (e) {
+          console.error(`RSS 피드 가져오기 실패 (스킵): ${source}`, e);
+          return [];
+        }
+      }),
+    );
+    const items = results.flat();
 
     const itemsWithContent = await Promise.all(
       items.map(async (item) => {
@@ -180,13 +191,18 @@ export async function GET() {
       model: openai("gpt-5.4-mini"),
       system: prompt,
       prompt: JSON.stringify(itemsWithContent),
+      providerOptions: {
+        openai: {
+          reasoningEffort: "low",
+        },
+      },
     });
 
     console.log("대본 생성 완료");
 
     await textToSpeech(
       text,
-      itemsWithContent.map((item) => item.title),
+      itemsWithContent.map((item) => ({ title: item.title, link: item.link })),
     );
 
     console.log("생성 완료");
