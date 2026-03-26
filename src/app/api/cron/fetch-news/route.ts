@@ -5,6 +5,7 @@ import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import {
   generateText,
+  Output,
   experimental_generateSpeech as generateSpeech,
 } from "ai";
 import { openai } from "@ai-sdk/openai";
@@ -22,16 +23,28 @@ const itemSchema = z.object({
 
 const itemsSchema = z.array(itemSchema);
 
-const prompt = `
-당신은 뉴스 대본 작성자입니다. title, description, content로 구성된 데이터 리스트를 입력받아서, 한국어로 된 뉴스 대본을 출력하면 됩니다.
+const filterPrompt = `
+당신은 AI 뉴스 필터링 전문가입니다. 뉴스 목록을 입력받아 다음 두 가지 기준으로 필터링합니다:
 
-중요: 입력된 모든 뉴스를 빠짐없이 다뤄야 합니다. 어떤 뉴스도 생략하지 마세요.
+1. AI 관련성: 인공지능(AI), 머신러닝, 딥러닝, LLM, 생성형 AI 등과 직접적으로 관련된 뉴스만 남깁니다. AI와 무관한 일반 기술 뉴스는 제외합니다.
+2. 중복 제거: 같은 사건/주제를 다루는 뉴스가 여러 개 있으면, 가장 먼저 등장한 것만 남기고 나머지는 제외합니다.
+
+각 뉴스의 index(0부터 시작)를 입력받은 순서대로 평가하고, 통과한 뉴스의 index만 반환하세요.
+`;
+
+const prompt = `
+당신은 AI 뉴스 전문 대본 작성자입니다. 인공지능(AI) 관련 뉴스만을 다루는 전문 뉴스 프로그램의 대본을 작성합니다.
+
+title, description, content로 구성된 AI 뉴스 데이터 리스트를 입력받아서, 한국어로 된 AI 뉴스 대본을 출력하면 됩니다.
+
+중요: 입력된 모든 AI 뉴스를 빠짐없이 다뤄야 합니다. 어떤 뉴스도 생략하지 마세요.
 
 분량은 각 소식 별로 1~2분 정도로 설정합니다.
 
 만약 소식이 중복된다면 있다면, 뒤에 들어온 중복된 소식을 무시합니다.
 
 대본은 tts를 통해 음성 데이터로 바로 변환되기 때문에 오로지 텍스트만 포함해야 합니다.
+[오프닝], [클로징], [뉴스 1] 같은 대괄호 마커, 제목 표시, 구분 기호 등을 절대 넣지 마세요. 모든 내용이 자연스럽게 읽히는 문장으로만 구성되어야 합니다.
 `;
 
 function splitText(text: string, maxLength = 4000): string[] {
@@ -171,8 +184,44 @@ export async function GET() {
     );
     const items = results.flat();
 
+    // AI 뉴스 필터링 및 중복 제거 (content fetch 전에 수행)
+    const filterInput = items.map((item, index) => ({
+      index,
+      title: item.title,
+      description: item.description,
+    }));
+
+    const { output: filterResult } = await generateText({
+      model: openai("gpt-5.4-mini"),
+      output: Output.object({
+        schema: z.object({
+          selectedIndices: z
+            .array(z.number())
+            .describe("통과한 뉴스의 index 배열"),
+        }),
+      }),
+      system: filterPrompt,
+      prompt: JSON.stringify(filterInput),
+      providerOptions: {
+        openai: {
+          reasoningEffort: "low",
+        },
+      },
+    });
+
+    const selectedIndices = new Set(filterResult?.selectedIndices ?? []);
+    const filteredItems = items.filter((_, i) => selectedIndices.has(i));
+
+    console.log(
+      `필터링 완료: ${items.length}개 중 ${filteredItems.length}개 선택`,
+    );
+
+    if (filteredItems.length === 0) {
+      return Response.json({ success: true, message: "AI 뉴스 없음" });
+    }
+
     const itemsWithContent = await Promise.all(
-      items.map(async (item) => {
+      filteredItems.map(async (item) => {
         const data = await fetch(item.link);
         const html = await data.text();
         const { document } = parseHTML(html);
@@ -202,7 +251,7 @@ export async function GET() {
 
     await textToSpeech(
       text,
-      itemsWithContent.map((item) => ({ title: item.title, link: item.link })),
+      filteredItems.map((item) => ({ title: item.title, link: item.link })),
     );
 
     console.log("생성 완료");
