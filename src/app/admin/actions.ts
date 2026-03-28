@@ -4,13 +4,15 @@ import { createClient } from "@/app/utils/supabase/server";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 
+const SESSION_TOKEN = crypto.randomUUID();
+
 export async function login(password: string) {
   if (password !== process.env.ADMIN_PASSWORD) {
     return { error: "비밀번호가 틀렸습니다." };
   }
 
   const cookieStore = await cookies();
-  cookieStore.set("admin_session", process.env.ADMIN_PASSWORD!, {
+  cookieStore.set("admin_session", SESSION_TOKEN, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
@@ -22,7 +24,7 @@ export async function login(password: string) {
 
 export async function isAuthenticated() {
   const cookieStore = await cookies();
-  return cookieStore.get("admin_session")?.value === process.env.ADMIN_PASSWORD;
+  return cookieStore.get("admin_session")?.value === SESSION_TOKEN;
 }
 
 export async function deleteNews(id: number) {
